@@ -1,0 +1,76 @@
+---
+description: When coding, enhancing or creating a file.
+globs: 
+alwaysApply: false
+---
+# Coding Style Guide
+
+This project emphasizes a functional programming approach, focusing on clarity, modularity, and conciseness. Please adhere to the following principles:
+
+## Core Principles
+
+1.  **Functional Programming First:**
+    *   Prefer pure functions, immutability, and higher-order functions.
+    *   Minimize side effects.
+
+2.  **Readability is Key:**
+    *   Write code that is easy for someone unfamiliar with the codebase (even non-programmers, where possible) to understand.
+    *   Use clear and descriptive names for variables and functions.
+        *   Keep names concise: Use 2-3 keywords maximum.
+        *   For higher levels of abstraction, aim for single-keyword names.
+    *   Keep functions short and focused on a single task.
+
+3.  **Modularity (UNIX Philosophy):**
+    *   Break down complex logic into smaller, reusable functions or modules, each doing one thing well.
+    *   Aim for low coupling and high cohesion.
+    *   Components should work together effectively, often through simple, composable interfaces.
+
+4.  **Lean and DRY (Don't Repeat Yourself):**
+    *   Avoid redundant code. Abstract common patterns into functions or utilities.
+    *   Keep code concise and to the point. Eliminate unnecessary complexity or boilerplate.
+
+5.  **Judicious Use of OOP:**
+    *   Use Object-Oriented Programming sparingly, only when it significantly improves clarity or structure over a functional approach (e.g., managing complex state).
+
+6.  **High Signal-to-Noise Ratio:**
+    *   Focus on the essential logic. Avoid overly verbose comments or code constructs.
+    *   Ensure comments explain the *why*, not the *what*, if the code isn't self-explanatory.
+
+# Logging Philosophy
+
+This project adheres to a "high signal-to-noise ratio" logging philosophy. Logs are crucial for debugging and monitoring, but should not overwhelm operators or developers with redundant information about normal operations.
+
+## Guiding Principles
+
+1.  **Minimal Verbosity:** Default logging output should be lean. Avoid logging information just "because we can."
+2.  **`INFO` Sparingly:**
+    *   Use `INFO` for significant lifecycle events that are genuinely informative for an operator monitoring the system's health or progress, especially if they represent a less common but still successful path (e.g., a service starting, a configuration being loaded, or a notable fallback mechanism being successfully employed).
+    *   **Avoid `INFO` for routine, successful operations that are part of the expected flow.** If an operation completes as expected without any special circumstances, it generally does not need an `INFO` log. The absence of errors or warnings implies success.
+3.  **`DEBUG` for Details:**
+    *   Use `DEBUG` for detailed diagnostic information useful for developers during troubleshooting. This includes tracing the flow of routine operations, variable states, etc. These logs are typically not enabled in production by default.
+4.  **`WARNING` for Actionable Alerts:**
+    *   Use `WARNING` for potentially harmful situations or unexpected events that are recoverable or do not (yet) prevent the current operation from completing. Warnings should indicate that an operator or developer might need to investigate something.
+5.  **`ERROR` for Failures:**
+    *   Use `ERROR` for events that prevent a normal operation from completing or indicate a definite failure. Error messages must be clear, provide context, and ideally suggest causes or next steps for diagnosis. Include tracebacks where appropriate.
+6.  **Clarity and Actionability:** All log messages, regardless of level, should be clear, concise, and provide enough context to be understood. Error and warning messages should be actionable.
+7.  **Tool/Module Identification:** Prefix log messages with an identifier for the component generating the log (e.g., `[FastMCPProvider]`, `[MyModule]`) to aid in filtering and context.
+
+**Example Scenario:**
+
+*   A tool successfully executes its primary function without issues: No `INFO` log needed. A `DEBUG` log might exist for detailed tracing.
+*   A tool encounters a recoverable issue and uses a fallback mechanism successfully: An `INFO` log might be appropriate to note the use of the fallback. A `WARNING` might precede it if the condition leading to the fallback is itself a concern.
+*   A tool fails to connect to a required external service: An `ERROR` log is essential.
+
+Don't assume or invent anything, search the code, always search the code.
+
+After searching the code, explain what is going wrong and why. Then explain what is happening.
+
+Always explain deeply what is going wrong and why.
+
+Once done and only once, this is done, you can make the necessary change.
+
+But first and foremost search the code.
+
+When making the change, add comments explaining what you did and the relation in the system. It should be self evident and hint to relevant piece of the system if it helps.
+
+Keep it high signal to noise ratio, so that it's light and it avoid brain fog from reading it.

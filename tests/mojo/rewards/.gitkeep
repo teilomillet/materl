@@ -1,0 +1,4 @@
+# Placeholder for tests for Mojo reward kernels.
+# These would likely be Python scripts that import the compiled Mojo kernels
+# and call them with test data.
+# e.g., test_xml_count.py 

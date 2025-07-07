@@ -1,0 +1,22 @@
+[project]
+name = "materl"
+version = "0.1.1"
+description = "Add your description here"
+authors = [
+    { name="Teïlo Millet", email="teilomillet@gmail.com" },
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "modular>=25.3.0",
+    "torch>=2.5.0",
+    "transformers>=4.52.3",
+    "trl>=0.17.0",
+    "wandb>=0.20.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."] # Search in the current directory
+include = ["materl"] # Specify the package directory name explicitly
+# You can also use exclude = ["trl*", "modular*"] if preferred, 
+# but include is more direct for this case.
