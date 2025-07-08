@@ -56,7 +56,7 @@ def generate_completions(
         add_special_tokens=False,
     ).to(device)
 
-    # --- Generation ---
+    # Generation
     # The 'max_seq_length' is a config for our pipeline, not for Hugging Face's `generate`.
     # We remove it to avoid passing an unexpected keyword argument.
     generation_kwargs.pop("max_seq_length", None)

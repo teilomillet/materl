@@ -63,23 +63,57 @@ def _compute_groupwise_advantages(
              advantages[rows_to_scale] = advantages[rows_to_scale] / (std_grouped_rewards[rows_to_scale] + 1e-8)
             
     # Return the flattened advantages tensor. The key is now standardized.
-    return {"advantages": advantages.view(-1)} 
+    return {"advantages": advantages.view(-1)}
+
+
+def compute_discounted_returns(
+    rewards_per_token: torch.Tensor,
+    completion_masks: torch.Tensor,
+    gamma: float = 0.99,
+    **kwargs, # Absorb unused arguments
+) -> Dict[str, torch.Tensor]:
+    """
+    Computes discounted returns (Gt) for each token in a sequence.
+
+    The return at timestep t is the sum of discounted future rewards:
+    Gt = R_t + gamma * R_{t+1} + gamma^2 * R_{t+2} + ...
+
+    This is computed efficiently via a reverse pass. This function is the
+    concrete implementation for the "returns" operation in the REINFORCE recipe.
+
+    Args:
+        rewards_per_token: A 2D tensor of shape (batch_size, sequence_length)
+                           where a reward is assigned to a specific token.
+                           In the simplest case, this is a single reward at the
+                           last token of the sequence.
+        completion_masks: A 2D tensor masking the completion tokens.
+        gamma: The discount factor.
+
+    Returns:
+        A dictionary containing the discounted returns tensor.
+    """
+    returns = torch.zeros_like(rewards_per_token)
+    discounted_return = 0.0
+
+    # Iterate backwards through the sequence
+    for t in reversed(range(rewards_per_token.size(1))):
+        # The return is the current reward plus the discounted future return.
+        # If the token is masked, its contribution is zero.
+        discounted_return = rewards_per_token[:, t] + gamma * discounted_return * completion_masks[:, t]
+        returns[:, t] = discounted_return
+
+    return {"returns": returns.detach()}
 
 
 def compute_advantages(
-    # This function now accepts the raw inputs for reward computation,
-    # encapsulating the dependency and simplifying the compiler.
-    reward_configs: List[Dict[str, Any]],
-    prompts_text: List[str],
-    completions_text: List[str],
-    completions_ids: torch.Tensor,
-    completion_masks: torch.Tensor,
-    tokenizer: Any,
-    device: Any,
-    max_completion_length: int,
+    # This function is now decoupled from reward computation. It expects
+    # a pre-computed rewards tensor.
+    rewards_tensor: torch.Tensor,
     num_generations: int,
     # The presence of `values` determines whether we use GAE or not.
     values: Optional[torch.Tensor] = None,
+    rewards_per_token: Optional[torch.Tensor] = None,
+    completion_masks: Optional[torch.Tensor] = None,
     full_input_ids: Optional[torch.Tensor] = None,
     # GAE-specific parameters
     gamma: float = 0.99,
@@ -94,34 +128,27 @@ def compute_advantages(
     computes advantages using Generalized Advantage Estimation (GAE). Otherwise,
     it computes group-wise normalized advantages, a value-free method.
     """
-    # 1. Compute rewards. This is common to both GAE and value-free methods.
-    # The reward function returns both per-sequence and per-token rewards.
-    reward_result = reward_fns.compute_rewards(
-        reward_configs=reward_configs,
-        prompts_text=prompts_text,
-        completions_text=completions_text,
-        completions_ids=completions_ids,
-        completion_masks=completion_masks,
-        tokenizer=tokenizer,
-        device=device,
-        reward_baseline=0.0,
-        max_completion_length=max_completion_length,
-    )
+    # The internal reward computation has been removed. This function now
+    # acts purely as a dispatcher to the correct advantage calculation method.
 
     # 2. Dispatch to the appropriate advantage calculation method.
     if values is not None:
-        # Value-based path (GAE)
+        if rewards_per_token is None:
+            raise ValueError("`rewards_per_token` must be provided for GAE computation.")
+        if completion_masks is None:
+            raise ValueError("`completion_masks` must be provided for GAE computation.")
         if full_input_ids is None:
             raise ValueError("`full_input_ids` must be provided for GAE computation.")
+        
         # We need the prompt length to correctly slice the `values` tensor, which
         # is computed on the full sequence (prompt + completion).
         # We can infer prompt length from the difference between the full sequence
         # and the completion sequence.
         # Note: This assumes all prompts in the batch are padded to the same length.
-        prompt_length = full_input_ids.shape[1] - completions_ids.shape[1]
+        prompt_length = values.shape[1] - rewards_per_token.shape[1]
         
         return compute_gae_advantages(
-            rewards_per_token=reward_result["rewards_per_token"],
+            rewards_per_token=rewards_per_token,
             values=values,
             completion_masks=completion_masks,
             prompts_input_ids=full_input_ids[:, :prompt_length],
@@ -131,7 +158,7 @@ def compute_advantages(
     else:
         # Value-free path (group-wise normalization)
         return _compute_groupwise_advantages(
-            rewards_tensor=reward_result["rewards_tensor"],
+            rewards_tensor=rewards_tensor,
             num_generations=num_generations
         )
 

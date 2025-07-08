@@ -62,10 +62,30 @@ def length_reward(
     return rewards
 
 
-# --- Reward Function Registry ---
+def outcome_reward(
+    completions_text: List[str],
+    **kwargs,
+) -> List[float]:
+    """
+    A simple placeholder for an outcome-based reward.
+
+    It returns 1.0 if the completion contains "success", otherwise -1.0.
+    This simulates a reward based on the final outcome of a trajectory,
+    which is a core concept for the REINFORCE algorithm.
+    """
+    rewards = []
+    for text in completions_text:
+        if "success" in text.lower():
+            rewards.append(1.0)
+        else:
+            rewards.append(-1.0)
+    return rewards
+
+
 
 REWARD_FUNCTION_REGISTRY: Dict[str, Callable] = {
     "length_reward": length_reward,
+    "outcome_reward": outcome_reward,
     # New Python reward functions can be registered here
 }
 
@@ -87,6 +107,53 @@ def _get_reward_function(name: str) -> Callable:
         raise ValueError(f"Reward function '{name}' not found in registry.")
     return REWARD_FUNCTION_REGISTRY[name]
 
+
+def compute_reward(
+    # This function computes a single, weighted reward.
+    name: str,
+    weight: float,
+    prompts_text: List[str],
+    completions_text: List[str],
+    completions_ids: torch.Tensor,
+    completion_masks: torch.Tensor,
+    tokenizer: "PreTrainedTokenizerBase",
+    device: torch.device,
+    max_completion_length: int,
+    **kwargs,
+) -> Dict[str, torch.Tensor]:
+    """
+    Computes a single reward function and returns both per-sequence and
+    per-token tensors.
+    """
+    reward_fn = _get_reward_function(name)
+    
+    # Prepare args for the specific reward function
+    reward_fn_args = {
+        "prompts_text": prompts_text,
+        "completions_text": completions_text,
+        "completion_ids": completions_ids,
+        "completion_masks": completion_masks,
+        "max_completion_length": max_completion_length,
+        "eos_token_id": tokenizer.eos_token_id,
+        **kwargs,
+    }
+
+    py_rewards = reward_fn(**reward_fn_args)
+    
+    # The final rewards are per-sequence
+    rewards_tensor = torch.tensor(py_rewards, dtype=torch.float32, device=device)
+    
+    # We also create a per-token reward tensor, where the reward is assigned
+    # to the last token of the completion. This is used by GAE.
+    per_token_rewards = torch.zeros_like(completions_ids, dtype=torch.float32, device=device)
+    sequence_lengths = completion_masks.sum(dim=1) - 1
+    batch_indices = torch.arange(rewards_tensor.shape[0], device=device)
+    per_token_rewards[batch_indices, sequence_lengths] = rewards_tensor
+    
+    return {
+        "rewards_tensor": rewards_tensor * weight,
+        "rewards_per_token": per_token_rewards * weight
+    }
 
 def compute_rewards(
     reward_configs: List[Dict[str, Any]],
@@ -125,51 +192,29 @@ def compute_rewards(
     """
     num_total_gens = completions_ids.shape[0]
     total_rewards = torch.zeros(num_total_gens, dtype=torch.float32, device=device)
+    total_rewards_per_token = torch.zeros_like(completions_ids, dtype=torch.float32, device=device)
 
     for config in reward_configs:
-        weight = config.get("weight", 1.0)
-        if weight == 0:
-            continue
-        
-        # We'll assume PYTHON type for now as the compiler doesn't specify it
-        config_type = config.get("type", "PYTHON")
         name = config.get("name")
         if not name:
             print(f"Warning: Skipping reward config with no name: {config}")
             continue
 
-        kwargs = config.get("kwargs", {})
-
-        if config_type == "PYTHON":
-            try:
-                reward_fn = _get_reward_function(name)
-                
-                # Prepare args for the specific reward function
-                reward_fn_args = {
-                    "prompts_text": prompts_text,
-                    "completions_text": completions_text,
-                    "completion_ids": completions_ids,
-                    "completion_masks": completion_masks,
-                    "max_completion_length": max_completion_length,
-                    "eos_token_id": tokenizer.eos_token_id,
-                    **kwargs,
-                }
-
-                py_rewards = reward_fn(**reward_fn_args)
-                current_rewards = torch.tensor(py_rewards, dtype=torch.float32, device=device)
-
-                if current_rewards.shape[0] != num_total_gens:
-                     print(f"Warning: Reward '{name}' mismatch. Expected {num_total_gens}, got {current_rewards.shape[0]}. Skipping.")
-                     continue
-                
-                total_rewards += weight * current_rewards
-
-            except Exception as e:
-                print(f"Error computing Python reward '{name}': {e}")
-
-        elif config_type == "MOJO":
-            # Placeholder for Mojo kernel dispatch logic
-            print(f"Warning: Mojo reward kernel '{name}' not yet implemented. Skipping.")
+        # We now call the single reward function for each config
+        reward_result = compute_reward(
+            name=name,
+            weight=config.get("weight", 1.0),
+            prompts_text=prompts_text,
+            completions_text=completions_text,
+            completions_ids=completions_ids,
+            completion_masks=completion_masks,
+            tokenizer=tokenizer,
+            device=device,
+            max_completion_length=max_completion_length,
+            **config.get("kwargs", {}),
+        )
+        total_rewards += reward_result["rewards_tensor"]
+        total_rewards_per_token += reward_result["rewards_per_token"]
 
     # The final rewards are per-sequence, but for GAE we need per-token rewards.
     # The simplest approach is to assign the total reward to the last token of the completion.
@@ -191,6 +236,6 @@ def compute_rewards(
     # This now serves both value-free (GRPO/DAPO) and value-based (VAPO) methods.
     return {
         "rewards_tensor": total_rewards,       # For value-free advantage calculation
-        "rewards_per_token": per_token_rewards # For GAE advantage calculation
+        "rewards_per_token": total_rewards_per_token # For GAE advantage calculation
     } 
 # Note: Adding a comment to force linter re-evaluation. 

@@ -16,28 +16,14 @@ from .graph import Graph
 from .agents import Agent
 
 # Placeholder symbolic operations for static analysis.
-# At runtime, the @recipe decorator will replace these with
-# the methods from a GraphBuilder instance.
-def generate(*args, **kwargs): pass
-def logprobs(*args, **kwargs): pass
-def advantages(*args, **kwargs): pass
-def reward(*args, **kwargs): pass
-def loss(*args, **kwargs): pass
-def set_loss(*args, **kwargs): pass
+# These are not the actual implementations but are used for type hinting
+# and graph construction before the compiler replaces them.
+from . import recipes
 
 __all__ = [
-    "recipe",
-    "algorithm",
-    "op",
-    "mojo_op",
     "Graph",
     "Agent",
-    "generate",
-    "logprobs",
-    "advantages",
-    "reward",
-    "loss",
-    "set_loss",
+    "recipes"
 ]
 
 # materl Python Package
@@ -55,19 +41,19 @@ from .config import (
     DAPOConfig,
     VAPOConfig,
     GRPOConfig,
-    TrainingConfig,
     GenerationConfig,
 )
 
-# Update __all__ to expose the public API.
-__all__.extend([
+# Update __all__ to a more explicit and maintainable list.
+__all__ = [
+    "Agent",
+    "Graph",
+    "compile",
     "config",
     "functions",
     "recipes",
-    "compile",
     "DAPOConfig",
     "VAPOConfig",
     "GRPOConfig",
-    "TrainingConfig",
     "GenerationConfig",
-])
+]

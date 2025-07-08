@@ -1,7 +1,7 @@
 """
-materl.recipes.grpo
+materl.recipes.reinforce
 
-The canonical recipe for the GRPO algorithm.
+The recipe for the REINFORCE algorithm, composed from modular steps.
 """
 from typing import TYPE_CHECKING, Optional
 from .decorator import recipe
@@ -9,57 +9,55 @@ from .steps import (
     generation_step,
     logprobs_step,
     rewards_step,
-    advantages_step,
-    loss_step,
+    returns_step,
+    reinforce_loss_step,
 )
 
-# This block is only for static analysis. It's ignored at runtime.
 if TYPE_CHECKING:
     from ..agents import Agent
     from .builder import GraphBuilder
 
 
 @recipe
-def grpo(
+def reinforce(
     ml: "GraphBuilder",
     policy: "Agent",
-    ref_policy: "Agent",
     prompts: list[str],
     max_completion_length: int,
+    gamma: float,
+    reward_fn: str = "outcome_reward",
+    loss_fn: str = "reinforce_loss",
     loss_kwargs: Optional[dict] = None,
 ):
     """
-    The GRPO recipe, composed from individual, reusable steps.
-    This recipe can be configured with different loss parameters.
+    The REINFORCE recipe, composed from individual, reusable steps.
+    This recipe can be configured with different reward and loss functions.
     """
     # 1. Generation
     completions = generation_step(ml, policy=policy, prompts=prompts)
 
     # 2. Log-Probabilities
-    policy_logprobs, ref_logprobs = logprobs_step(
-        ml, policy=policy, ref_policy=ref_policy, completions=completions
-    )
+    # For REINFORCE, we only need the policy's logprobs.
+    policy_logprobs = ml.logprobs(model=policy, completions=completions)
 
     # 3. Rewards
-    rewards = rewards_step(ml)
+    rewards = rewards_step(ml, reward_name=reward_fn, reward_weight=1.0)
 
-    # 4. Advantages
-    advantages = advantages_step(
+    # 4. Discounted Returns
+    returns = returns_step(
         ml,
-        rewards_tensor=rewards,
-        prompts=prompts,
+        rewards=rewards,
         completions=completions,
-        policy=policy,
-        max_completion_length=max_completion_length,
+        gamma=gamma,
     )
 
     # 5. Loss
-    loss_step(
+    reinforce_loss_step(
         ml,
-        advantages=advantages,
         policy_logprobs=policy_logprobs,
-        ref_logprobs=ref_logprobs,
+        returns=returns,
         completions=completions,
+        loss_fn=loss_fn,
         loss_kwargs=loss_kwargs,
     )
 

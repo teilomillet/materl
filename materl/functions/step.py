@@ -61,14 +61,14 @@ def unified_training_step(
     This design decouples the training loop from the specifics of any single
     RL algorithm, allowing for maximum composability.
     """
-    # --- 1. Prepare data for forward passes ---
+    # 1. Prepare data for forward passes
     # Detach tensors from the engine output that should not have gradients flowing back
     data_for_loss = {
         key: val.detach() if isinstance(val, torch.Tensor) else val
         for key, val in processed_data.items()
     }
 
-    # --- 2. Perform forward passes to enable gradient computation ---
+    # 2. Perform forward passes to enable gradient computation
     # Re-calculate logprobs with the current (training) policy model
     policy_model = models['policy']
     current_policy_logprobs = compute_logprobs(
@@ -85,9 +85,9 @@ def unified_training_step(
     if 'value' in models and models['value'] is not None:
         value_model = models['value']
         current_values_dict = compute_values(
-            model=value_model,
-            input_ids=data_for_loss["full_input_ids"],
-            attention_mask=data_for_loss["full_attention_mask"],
+            value_model=value_model,
+            full_input_ids=data_for_loss["full_input_ids"],
+            full_attention_mask=data_for_loss["full_attention_mask"],
         )
         current_values_full = current_values_dict["values"]
 
@@ -96,7 +96,7 @@ def unified_training_step(
         data_for_loss["current_values"] = current_values_full[:, prompt_length:]
         data_for_loss["old_values"] = processed_data["values"].detach() # Ensure it is there
 
-    # --- 3. Assemble final data and compute loss ---
+    # 3. Assemble final data and compute loss
     # Add algorithm hyperparameters to the data dictionary for the loss function
     data_for_loss.update(asdict(algorithm_config))
 
@@ -104,7 +104,7 @@ def unified_training_step(
     loss_metrics = loss_fn(data_for_loss)
     loss = loss_metrics["loss"]
 
-    # --- 4. Perform Gradient Update ---
+    # 4. Perform Gradient Update
     # This step is delegated to our shared, first-principle gradient update function,
     # which can handle multiple optimizers and schedulers simultaneously.
     _perform_gradient_update(
@@ -113,5 +113,5 @@ def unified_training_step(
         lr_schedulers=list(lr_schedulers.values())
     )
 
-    # --- 5. Return metrics for logging ---
+    # 5. Return metrics for logging
     return {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in loss_metrics.items()} 

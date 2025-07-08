@@ -5,6 +5,7 @@ This module defines the NaiveCompiler, which translates a symbolic Graph
 into an executable plan using existing Python functions.
 """
 import inspect
+import torch
 from typing import Dict, Any, List
 from .graph import Graph, SymbolicNode
 
@@ -12,23 +13,26 @@ from .graph import Graph, SymbolicNode
 from materl.functions import (
     generation, 
     logprobs, 
-    rewards, 
     advantages, 
     loss as loss_fns,
     values as values_fns
 )
-
-# Configuration classes are now imported from the central config module,
-# ensuring a single source of truth for algorithm and generation parameters.
-from materl.config import GenerationConfig, GRPOConfig
+from materl.functions.rewards import compute_reward
 
 
 OP_MAP = {
     "generate": generation.generate_completions,
     "logprobs": logprobs.compute_policy_and_ref_logprobs,
     "advantages": advantages.compute_advantages,
-    "loss": loss_fns.compute_policy_gradient_loss,
+    "returns": advantages.compute_discounted_returns,
+    "reward": compute_reward, # The op for a single reward
     "values": values_fns.compute_values,
+    # The "loss" op is now a generic dispatcher, see run method.
+    "loss": {
+        "default": loss_fns.compute_policy_gradient_loss,
+        "reinforce_loss": loss_fns.compute_reinforce_loss,
+        "kimi_reinforce_loss": loss_fns.compute_kimi_reinforce_loss,
+    }
 }
 
 class ExecutableCompiler:
@@ -85,14 +89,9 @@ class ExecutableCompiler:
         if "policy" in execution_context:
             execution_context["device"] = execution_context["policy"].model.device
 
-        reward_configs = []
-
         for node in self.execution_plan:
             print(f"Executing node: {node.name} (op: {node.op})")
             
-            if node.op == "reward":
-                reward_configs.append({"name": node.name, **node.op_kwargs})
-                continue
             if node.op == "add":
                 continue
 
@@ -101,24 +100,100 @@ class ExecutableCompiler:
                 print(f"  [Warning] No op for '{node.op}', skipping.")
                 continue
 
-            # Before executing an operation, we inject the collected reward
-            # configurations into the execution context. This makes them
-            # available to functions like `compute_advantages` that depend on them.
-            if reward_configs:
-                execution_context["reward_configs"] = reward_configs
+            # Dynamic Loss Function Dispatch
+            # This is the key to making the system extensible. It allows the loss
+            # function to be passed as a callable object directly, bypassing the
+            # static OP_MAP.
+            if node.op == "loss":
+                loss_fn_or_key = node.op_kwargs.get("loss_fn", "default")
+                
+                # If loss_fn is a callable function, use it directly.
+                if callable(loss_fn_or_key):
+                    op_func = loss_fn_or_key
+                # Otherwise, fall back to the OP_MAP lookup for backward compatibility.
+                else:
+                    op_func = op_func.get(loss_fn_or_key)
+                    if not op_func:
+                        raise ValueError(f"Loss function '{loss_fn_or_key}' not found in OP_MAP.")
 
-            # Build dependencies
-            func_kwargs = self._build_kwargs(op_func, execution_context)
+            # Argument Resolution
+            # This is the core logic for dependency injection. It inspects the
+            # function signature and resolves arguments from the execution context,
+            # including the outputs of previous nodes.
+            func_kwargs = {}
+            func_sig = inspect.signature(op_func)
 
-            # The special dependency injection logic has been removed.
-            # The compiler is now a generic engine that simply maps context
-            # variables to function arguments. All operation-specific logic
-            # is now encapsulated within the functions themselves (e.g., in
-            # `materl.functions.advantages`). This greatly simplifies the
-            # compiler and makes the system more modular and scalable.
+            for param_name in func_sig.parameters:
+                found_arg = False
+                # 1. Check if the argument is defined on the node itself
+                if param_name in node.op_kwargs:
+                    value = node.op_kwargs[param_name]
+                    if isinstance(value, SymbolicNode):
+                        # If the value is a node, it's a dependency. We first check
+                        # its direct output dictionary for the required key.
+                        dependency_output = execution_context.get(value.name, {})
+                        if param_name in dependency_output:
+                            func_kwargs[param_name] = dependency_output[param_name]
+                            found_arg = True
+                    else:
+                        # It's a literal value (e.g., gamma, weight)
+                        func_kwargs[param_name] = value
+                        found_arg = True
+                
+                if found_arg:
+                    continue
+                
+                # 2. If not found in the node's specific output, check the global context.
+                #    This handles aliases like `current_policy_logprobs`.
+                if param_name in execution_context:
+                    func_kwargs[param_name] = execution_context[param_name]
+                    continue
+                
+                # 3. Check configs for hyperparameters
+                found_in_config = False
+                for config in execution_context["configs"].values():
+                    if hasattr(config, param_name):
+                        func_kwargs[param_name] = getattr(config, param_name)
+                        found_in_config = True
+                        break
+                if found_in_config:
+                    continue
+
+                # 4. Handle special cases for Agent properties, extracting the
+                #    underlying model or tokenizer from the Agent wrapper.
+                if param_name == 'model' and 'policy' in execution_context:
+                    func_kwargs['model'] = execution_context['policy'].model
+                elif param_name == 'policy_model' and 'policy' in execution_context:
+                    func_kwargs['policy_model'] = execution_context['policy'].model
+                elif param_name == 'tokenizer' and 'policy' in execution_context:
+                    func_kwargs['tokenizer'] = execution_context['policy'].tokenizer
 
             result_dict = op_func(**func_kwargs)
+
+            # All op functions are expected to return a dictionary. This assertion
+            # helps the linter understand the type of `result_dict` and also
+            # serves as a robust runtime check.
+            assert isinstance(result_dict, dict), f"Op '{node.op}' returned type {type(result_dict)}, but expected a dict."
+
+            # Aggregate rewards into the context
+            if node.op == "reward":
+                if "rewards_tensor" not in execution_context:
+                    execution_context["rewards_tensor"] = torch.zeros_like(result_dict["rewards_tensor"])
+                execution_context["rewards_tensor"] += result_dict["rewards_tensor"]
+                
+                if "rewards_per_token" not in execution_context:
+                    execution_context["rewards_per_token"] = torch.zeros_like(result_dict["rewards_per_token"])
+                execution_context["rewards_per_token"] += result_dict["rewards_per_token"]
+
             
+            # The order of these operations is critical. We unpack the dictionary
+            # into the general context first, then set the specific entry for
+            # the node's output. This prevents name collisions where a node's
+            # name is the same as a key in its output dict (e.g., 'returns').
+            if isinstance(result_dict, dict):
+                execution_context.update(result_dict)
+            execution_context[node.name] = result_dict
+
             # Map the output of the logprobs nodes to the expected input names
             # for the loss function. This is a temporary solution to align the
             # generic compiler with the specific signature of `compute_grpo_loss`.
@@ -127,62 +202,9 @@ class ExecutableCompiler:
             elif node.name == "logprobs_2":
                 execution_context["old_policy_logprobs"] = result_dict["policy_logprobs"]
             
-            execution_context[node.name] = result_dict
-            if isinstance(result_dict, dict):
-                execution_context.update(result_dict)
-
         print("--- ExecutableCompiler run finished ---")
         return execution_context
 
-    def _build_kwargs(self, func, context, keys_to_ignore=None) -> Dict[str, Any]:
-        if keys_to_ignore is None:
-            keys_to_ignore = []
-        
-        kwargs = {}
-        func_sig = inspect.signature(func)
-
-        for param_name in func_sig.parameters:
-            if param_name in keys_to_ignore:
-                continue
-
-            # We must handle the specific case of agent models first, as their
-            # parameter names (`value_model`, `policy`, etc.) also exist as
-            # top-level keys in the context. Checking for them first ensures we
-            # extract the underlying `.model` attribute instead of passing the
-            # entire Agent object, which is not callable.
-            if param_name == 'model' and 'policy' in context:
-                kwargs['model'] = context['policy'].model
-                continue
-            if param_name == 'policy_model' and 'policy' in context:
-                kwargs['policy_model'] = context['policy'].model
-                continue
-            if param_name == 'ref_model' and 'ref_policy' in context:
-                kwargs['ref_model'] = context['ref_policy'].model
-                continue
-            if param_name == 'value_model' and 'value_model' in context:
-                kwargs['value_model'] = context['value_model'].model
-                continue
-            if param_name == 'tokenizer' and 'policy' in context:
-                kwargs['tokenizer'] = context['policy'].tokenizer
-                continue
-
-            # Now, handle the generic case where the parameter name is a key
-            # in the execution context.
-            if param_name in context:
-                kwargs[param_name] = context[param_name]
-                continue
-            
-            # Finally, check inside the configuration objects for the parameter.
-            found_in_config = False
-            for config in context["configs"].values():
-                if hasattr(config, param_name):
-                    kwargs[param_name] = getattr(config, param_name)
-                    found_in_config = True
-                    break
-            if found_in_config:
-                continue
-
-        return kwargs
 
 def compile(graph: Graph) -> ExecutableCompiler:
     """

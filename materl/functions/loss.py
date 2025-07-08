@@ -119,7 +119,7 @@ def compute_policy_gradient_loss(
     Returns:
         A dictionary containing the total loss and other metrics.
     """
-    # --- Policy Loss ---
+    # Policy Loss
     old_policy_logprobs = old_policy_logprobs.detach()
     is_per_token = advantages.dim() > 1
 
@@ -155,7 +155,7 @@ def compute_policy_gradient_loss(
             # GRPO-style: Average the loss per sequence, giving each equal weight.
             policy_loss = policy_loss_per_sequence.mean()
 
-    # --- KL Divergence Penalty (optional) ---
+    # KL Divergence Penalty (optional)
     kl_divergence_loss = torch.tensor(0.0, device=policy_loss.device)
     if ref_logprobs is not None and beta > 0:
         ref_logprobs = ref_logprobs.detach()
@@ -172,7 +172,7 @@ def compute_policy_gradient_loss(
         # Average the KL divergence across the batch
         kl_divergence_loss = kl_per_sequence.mean()
 
-    # --- Value Loss (optional) ---
+    # Value Loss (optional)
     value_loss = torch.tensor(0.0, device=policy_loss.device)
     if values is not None and returns is not None:
         # `values` is for the full sequence, but `returns` is for the completion only.
@@ -196,6 +196,82 @@ def compute_policy_gradient_loss(
         "kl_divergence_scalar": torch.tensor(kl_divergence_loss.item()),
         "value_loss_scalar": torch.tensor(value_loss.item()),
     }
+
+
+def compute_reinforce_loss(
+    current_policy_logprobs: torch.Tensor,
+    returns: torch.Tensor,
+    completion_masks: torch.Tensor,
+    **kwargs, # Absorb unused arguments
+) -> Dict[str, torch.Tensor]:
+    """
+    Computes the REINFORCE policy gradient loss.
+
+    The loss is the negative sum of log probabilities of actions multiplied by
+    the discounted future returns. This function is the concrete implementation
+    for the "reinforce_loss" operation.
+
+    Loss = - (G_t * log(pi(a_t | s_t)))
+
+    Args:
+        current_policy_logprobs: Log probabilities from the current policy.
+        returns: The discounted returns (Gt) for each token.
+        completion_masks: Mask for the completion part of the sequences.
+
+    Returns:
+        A dictionary containing the total loss and other metrics.
+    """
+    # The policy gradient is -(returns * logprobs).
+    # We want to maximize this, so we minimize its negative.
+    policy_loss_per_token = -returns * current_policy_logprobs
+
+    # We only consider the loss for the tokens that were actually generated.
+    masked_loss = policy_loss_per_token * completion_masks
+
+    # We average the loss over all tokens in the batch.
+    loss = masked_loss.sum() / completion_masks.sum().clamp(min=1)
+
+    return {
+        "loss": loss,
+        "policy_loss_scalar": torch.tensor(loss.item()),
+    }
+
+
+def compute_kimi_reinforce_loss(
+    current_policy_logprobs: torch.Tensor,
+    returns: torch.Tensor,
+    rewards_tensor: torch.Tensor,
+    completion_masks: torch.Tensor,
+    discard_negative_samples: bool = True,
+    **kwargs, # Absorb unused arguments
+) -> Dict[str, torch.Tensor]:
+    """
+    Computes the REINFORCE loss with strategic negative sample control,
+    inspired by the Kimi-Researcher paper.
+
+    If `discard_negative_samples` is True, it masks out any trajectories
+    that received a negative final reward.
+    """
+    policy_loss_per_token = -returns * current_policy_logprobs
+    masked_loss = policy_loss_per_token * completion_masks
+
+    if discard_negative_samples:
+        # Create a mask for samples with non-negative rewards.
+        # rewards_tensor has shape (batch_size,), we need it to be (batch_size, seq_len)
+        # to correctly mask the loss.
+        positive_sample_mask = (rewards_tensor >= 0).unsqueeze(1)
+        masked_loss *= positive_sample_mask
+    
+    # Average the loss over all tokens in the batch.
+    # The denominator remains the same to not artificially inflate the loss
+    # when samples are discarded.
+    loss = masked_loss.sum() / completion_masks.sum().clamp(min=1)
+
+    return {
+        "loss": loss,
+        "policy_loss_scalar": torch.tensor(loss.item()),
+    }
+
 
 def compute_vapo_loss(data: Dict[str, Any]) -> Dict[str, Any]:
     """
