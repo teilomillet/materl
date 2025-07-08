@@ -46,6 +46,7 @@ class Graph:
         self.name = name
         self.nodes: List[SymbolicNode] = []
         self.named_nodes: Dict[str, SymbolicNode] = {}
+        self.builder: Optional[Any] = None # To hold a reference to the GraphBuilder
 
     def add_node(self, node: SymbolicNode):
         """Adds a new symbolic operation to the graph."""

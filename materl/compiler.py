@@ -136,8 +136,12 @@ class ExecutableCompiler:
                             func_kwargs[param_name] = dependency_output[param_name]
                             found_arg = True
                     else:
-                        # It's a literal value (e.g., gamma, weight)
-                        func_kwargs[param_name] = value
+                        # It's a literal value (e.g., gamma, weight) - but check if it's an Agent
+                        # Extract .model from Agent objects before passing to functions
+                        if hasattr(value, 'model') and hasattr(value, 'tokenizer'):  # It's an Agent
+                            func_kwargs[param_name] = value.model
+                        else:
+                            func_kwargs[param_name] = value
                         found_arg = True
                 
                 if found_arg:
@@ -146,7 +150,12 @@ class ExecutableCompiler:
                 # 2. If not found in the node's specific output, check the global context.
                 #    This handles aliases like `current_policy_logprobs`.
                 if param_name in execution_context:
-                    func_kwargs[param_name] = execution_context[param_name]
+                    value = execution_context[param_name]
+                    # Extract .model from Agent objects in execution context too
+                    if hasattr(value, 'model') and hasattr(value, 'tokenizer'):  # It's an Agent
+                        func_kwargs[param_name] = value.model
+                    else:
+                        func_kwargs[param_name] = value
                     continue
                 
                 # 3. Check configs for hyperparameters
@@ -167,6 +176,22 @@ class ExecutableCompiler:
                     func_kwargs['policy_model'] = execution_context['policy'].model
                 elif param_name == 'tokenizer' and 'policy' in execution_context:
                     func_kwargs['tokenizer'] = execution_context['policy'].tokenizer
+                
+                # 5. Handle Agent objects generically - extract model from any Agent
+                # Check if there's an Agent object in the context that could provide this parameter
+                if not found_arg:
+                    for context_key, context_value in execution_context.items():
+                        if hasattr(context_value, 'model') and hasattr(context_value, 'tokenizer'):  # It's an Agent
+                            if param_name == 'model' and context_key.endswith('_model'):
+                                # e.g., value_model -> model
+                                func_kwargs['model'] = context_value.model
+                                found_arg = True
+                                break
+                            elif param_name == context_key:
+                                # Direct match: value_model -> value_model.model  
+                                func_kwargs[param_name] = context_value.model
+                                found_arg = True
+                                break
 
             result_dict = op_func(**func_kwargs)
 

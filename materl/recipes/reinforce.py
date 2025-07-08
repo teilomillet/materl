@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Optional
 from .decorator import recipe
 from .steps import (
     generation_step,
-    logprobs_step,
     rewards_step,
     returns_step,
     reinforce_loss_step,
@@ -23,7 +22,6 @@ def reinforce(
     ml: "GraphBuilder",
     policy: "Agent",
     prompts: list[str],
-    max_completion_length: int,
     gamma: float,
     reward_fn: str = "outcome_reward",
     loss_fn: str = "reinforce_loss",

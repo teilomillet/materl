@@ -25,7 +25,7 @@ def grpo(
     policy: "Agent",
     ref_policy: "Agent",
     prompts: list[str],
-    max_completion_length: int,
+    beta: float = 0.04,  # KL divergence penalty coefficient (GRPO default)
     loss_kwargs: Optional[dict] = None,
 ):
     """
@@ -50,17 +50,20 @@ def grpo(
         prompts=prompts,
         completions=completions,
         policy=policy,
-        max_completion_length=max_completion_length,
     )
 
-    # 5. Loss
+    # 5. Loss - merge beta with any additional loss_kwargs
+    final_loss_kwargs = {"beta": beta}
+    if loss_kwargs:
+        final_loss_kwargs.update(loss_kwargs)
+    
     loss_step(
         ml,
         advantages=advantages,
         policy_logprobs=policy_logprobs,
         ref_logprobs=ref_logprobs,
         completions=completions,
-        loss_kwargs=loss_kwargs,
+        loss_kwargs=final_loss_kwargs,
     )
 
     return ml.get_graph() 

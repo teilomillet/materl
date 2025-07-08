@@ -52,7 +52,6 @@ def advantages_step(
     prompts: list[str],
     completions: "SymbolicNode",
     policy: "Agent",
-    max_completion_length: int,
 ) -> "SymbolicNode":
     """Adds an advantage calculation node to the graph."""
     return ml.advantages(
@@ -63,7 +62,6 @@ def advantages_step(
         completion_masks=completions,
         tokenizer=policy,
         device=policy,
-        max_completion_length=max_completion_length,
     )
 
 

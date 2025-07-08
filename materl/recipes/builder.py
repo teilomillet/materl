@@ -17,6 +17,7 @@ class GraphBuilder:
     """
     def __init__(self, name: str):
         self.graph = Graph(name)
+        self.graph.builder = self  # Attach builder to the graph
         self.node_map: Dict[str, SymbolicNode] = {}
         self.loss_node: Optional[SymbolicNode] = None
 

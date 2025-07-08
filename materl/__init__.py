@@ -1,59 +1,57 @@
 """
-materl
+materl - A declarative machine learning framework
 
-A Declarative RL Algorithm Composition Framework.
+The simple way to define and run RL algorithms.
 """
 
-# Public API for the materl framework.
-
-# Core Decorators
-from .recipes import recipe
 from .algorithm import algorithm
-from .ops import op, mojo_op
-
-# Core Classes
-from .graph import Graph
 from .agents import Agent
-
-# Placeholder symbolic operations for static analysis.
-# These are not the actual implementations but are used for type hinting
-# and graph construction before the compiler replaces them.
-from . import recipes
-
-__all__ = [
-    "Graph",
-    "Agent",
-    "recipes"
-]
-
-# materl Python Package
-
-__version__ = "0.0.1.dev0"
-
-# Import key modules and classes for easier access.
-from . import config
-from . import functions
-from . import recipes
 from .compiler import compile
+from .recipes import grpo, reinforce
 
-# Direct access to primary classes
-from .config import (
-    DAPOConfig,
-    VAPOConfig,
-    GRPOConfig,
-    GenerationConfig,
-)
+# Simple registry for algorithms
+_algorithms = {}
 
-# Update __all__ to a more explicit and maintainable list.
+def register_algorithm(name: str, algo_func):
+    """Register an algorithm so users can get it by name."""
+    _algorithms[name] = algo_func
+
+def get_algorithm(name: str):
+    """Get an algorithm by name."""
+    if name not in _algorithms:
+        raise ValueError(f"Algorithm '{name}' not found. Available: {list(_algorithms.keys())}")
+    return _algorithms[name]
+
+def list_algorithms():
+    """List all available algorithms."""
+    return list(_algorithms.keys())
+
+def run(algorithm_func, **kwargs):
+    """Simple one-liner to run any algorithm."""
+    # Separate generation config from other args
+    gen_config = kwargs.pop("generation_config", None)
+    
+    graph = algorithm_func(**kwargs)
+    compiled = compile(graph)
+    
+    # Pass config to the compiled graph runner
+    if gen_config:
+        kwargs["generation_config"] = gen_config
+        
+    return compiled.run(**kwargs)
+
+# Register built-in algorithms
+register_algorithm("grpo", grpo)
+register_algorithm("reinforce", reinforce)
+
+# Export the main API
 __all__ = [
-    "Agent",
-    "Graph",
-    "compile",
-    "config",
-    "functions",
-    "recipes",
-    "DAPOConfig",
-    "VAPOConfig",
-    "GRPOConfig",
-    "GenerationConfig",
+    "algorithm", 
+    "Agent", 
+    "compile", 
+    "run",
+    "get_algorithm",
+    "list_algorithms",
+    "grpo", 
+    "reinforce"
 ]
