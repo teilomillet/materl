@@ -176,3 +176,4 @@ cython_debug/
 
 trl_grpo_benchmark_output/
 wandb/
+.pixi
