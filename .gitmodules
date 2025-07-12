@@ -2,3 +2,6 @@
 	path = modular
 	url = https://github.com/modular/modular
 
+[submodule "retrain"]
+	path = retrain
+	url = https://github.com/teilomillet/retrain
