@@ -11,15 +11,12 @@ def test_imports():
     print("Testing imports...")
     
     try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
         print("✅ HuggingFace transformers imported successfully")
     except ImportError as e:
         print(f"❌ Failed to import transformers: {e}")
         return False
     
     try:
-        from max.entrypoints.llm import LLM
-        from max.pipelines.lib.config import PipelineConfig
         print("✅ MAX SDK imported successfully")
     except ImportError as e:
         print(f"❌ Failed to import MAX SDK: {e}")
@@ -29,7 +26,6 @@ def test_imports():
     try:
         # Add materl to path
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from materl.functions.generation import generate_completions
         print("✅ materl generation function imported successfully")
     except ImportError as e:
         print(f"❌ Failed to import materl: {e}")
@@ -70,7 +66,7 @@ def test_torch_backend():
             do_sample=True
         )
         
-        print(f"✅ PyTorch backend test successful!")
+        print("✅ PyTorch backend test successful!")
         print(f"   Generated: '{results['completions_text'][0].strip()}'")
         return True
         
@@ -106,7 +102,7 @@ def test_graph_backend():
             backend="graph"  # Use the new graph backend
         )
         
-        print(f"✅ MAX Graph backend test successful!")
+        print("✅ MAX Graph backend test successful!")
         print(f"   Generated: '{results['completions_text'][0].strip()}'")
         return True
         

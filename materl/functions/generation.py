@@ -9,6 +9,16 @@ import logging
 import warnings
 from contextlib import contextmanager
 
+from typing import List, Dict, Any, Union, TYPE_CHECKING
+
+import torch
+from transformers.modeling_utils import PreTrainedModel
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+from max.entrypoints.llm import LLM
+
+from .masks import create_completion_masks
+
 # Reduce tokenizer parallelism warnings by setting environment variable
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
@@ -23,18 +33,6 @@ def suppress_tokenizer_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
         warnings.filterwarnings("ignore", message=".*tokenizer.*", category=UserWarning)
         yield
-
-from typing import List, Dict, Any, Union, TYPE_CHECKING, cast
-
-import torch
-from transformers.modeling_utils import PreTrainedModel
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-
-from max.entrypoints.llm import LLM
-
-from .masks import create_completion_masks
-
-
 
 if TYPE_CHECKING:
     from max.graph import Graph
@@ -276,7 +274,6 @@ def generate_completions(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         eos_token_id = tokenizer.eos_token_id
         assert isinstance(eos_token_id, int)
-        pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else eos_token_id
 
         with suppress_tokenizer_warnings():
             prompt_inputs = tokenizer(
@@ -383,8 +380,6 @@ def generate_completions(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         eos_token_id = tokenizer.eos_token_id
         assert isinstance(eos_token_id, int), "Tokenizer must have an integer `eos_token_id`."
-        
-        pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else eos_token_id
         
         with suppress_tokenizer_warnings():
             prompt_inputs = tokenizer(

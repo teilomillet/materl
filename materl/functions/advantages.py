@@ -9,8 +9,7 @@ which stabilizes training by standardizing rewards within a group of generated
 samples.
 """
 import torch
-from typing import Dict, Any, List, Optional
-from . import rewards as reward_fns
+from typing import Dict, Optional
 
 def _compute_groupwise_advantages(
     rewards_tensor: torch.Tensor,
