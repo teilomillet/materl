@@ -22,6 +22,28 @@ from .masks import create_completion_masks
 # Reduce tokenizer parallelism warnings by setting environment variable
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+# Global LLM instance cache for training efficiency
+_LLM_CACHE = {}
+
+def get_or_create_llm(model_path: str) -> LLM:
+    """
+    Get or create a cached LLM instance for training efficiency.
+    This avoids recreating the LLM on every generation step during training.
+    """
+    if model_path not in _LLM_CACHE:
+        from max.entrypoints.llm import LLM
+        from max.pipelines.lib.config import PipelineConfig
+        
+        pipeline_config = PipelineConfig(model_path=model_path)
+        _LLM_CACHE[model_path] = LLM(pipeline_config=pipeline_config) # type: ignore
+        
+    return _LLM_CACHE[model_path]
+
+def clear_llm_cache():
+    """Clear the LLM cache. Useful for memory management in long training runs."""
+    global _LLM_CACHE
+    _LLM_CACHE.clear()
+
 # Configure logging to reduce verbosity
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.WARNING)
 logging.getLogger("max").setLevel(logging.WARNING)
@@ -361,13 +383,17 @@ def generate_completions(
         # Import LLM locally to avoid scoping issues
         from max.entrypoints.llm import LLM as MaxLLM
         
-        if not isinstance(model, MaxLLM):
+        # Handle both pre-initialized LLM instances and model paths
+        if isinstance(model, str):
+            # Training case: model path provided, create/reuse LLM instance
+            llm_model = get_or_create_llm(model)
+        elif isinstance(model, MaxLLM):
+            # Direct usage case: pre-initialized LLM instance
+            llm_model = model
+        else:
             raise ValueError(
-                "For 'max' backend, model must be a pre-initialized `max.entrypoints.llm.LLM` instance."
+                "For 'max' backend, model must be either a model path string or a pre-initialized `max.entrypoints.llm.LLM` instance."
             )
-        
-        # Explicit type assertion to resolve scoping issues with type checker
-        llm_model: MaxLLM = model
         expanded_prompts_text = [p for p in prompts for _ in range(num_generations)]
 
         responses = llm_model.generate(

@@ -28,16 +28,24 @@ def list_algorithms():
 
 def run(algorithm_func, **kwargs):
     """Simple one-liner to run any algorithm."""
-    # Separate generation config from other args
-    gen_config = kwargs.pop("generation_config", None)
+    # Separate configs from algorithm arguments
+    # Config objects should be passed to the compiled graph's run() method,
+    # not to the algorithm function itself
+    configs = {}
+    algorithm_kwargs = {}
     
-    graph = algorithm_func(**kwargs)
+    for key, value in kwargs.items():
+        if "config" in key.lower():
+            configs[key] = value
+        else:
+            algorithm_kwargs[key] = value
+    
+    # Create the symbolic graph with only algorithm parameters
+    graph = algorithm_func(**algorithm_kwargs)
     compiled = compile(graph)
     
-    # Pass config to the compiled graph runner
-    if gen_config:
-        kwargs["generation_config"] = gen_config
-        
+    # Pass all original kwargs (including configs) to the compiled graph runner
+    # The compiler will handle extracting individual parameters from config objects
     return compiled.run(**kwargs)
 
 # Register built-in algorithms

@@ -123,6 +123,26 @@ class ExecutableCompiler:
             func_kwargs = {}
             func_sig = inspect.signature(op_func)
 
+            # Special handling for generate operation - extract backend from generation_config
+            if node.op == "generate":
+                gen_config = execution_context.get("configs", {}).get("generation_config")
+                if gen_config:
+                    backend = getattr(gen_config, "backend", "torch")
+                    func_kwargs["backend"] = backend
+                    
+                    # Handle MAX backend model requirements
+                    if backend in ["max", "graph"]:
+                        max_model_path = getattr(gen_config, "max_model_path", None)
+                        if max_model_path:
+                            func_kwargs["model"] = max_model_path  # Use model path for both max and graph backends
+                            print(f"  [INFO] Using {backend.upper()} backend with model: {max_model_path}")
+                    
+                    # Copy generation parameters from config
+                    for param in ["max_prompt_length", "max_completion_length", "num_generations", 
+                                  "temperature", "top_p", "top_k", "repetition_penalty"]:
+                        if hasattr(gen_config, param):
+                            func_kwargs[param] = getattr(gen_config, param)
+
             for param_name in func_sig.parameters:
                 found_arg = False
                 # 1. Check if the argument is defined on the node itself
@@ -170,7 +190,8 @@ class ExecutableCompiler:
 
                 # 4. Handle special cases for Agent properties, extracting the
                 #    underlying model or tokenizer from the Agent wrapper.
-                if param_name == 'model' and 'policy' in execution_context:
+                #    But don't override if the parameter was already set (e.g., for MAX backend)
+                if param_name == 'model' and 'policy' in execution_context and 'model' not in func_kwargs:
                     func_kwargs['model'] = execution_context['policy'].model
                 elif param_name == 'policy_model' and 'policy' in execution_context:
                     func_kwargs['policy_model'] = execution_context['policy'].model
