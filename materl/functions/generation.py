@@ -25,23 +25,64 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 # Global LLM instance cache for training efficiency
 _LLM_CACHE = {}
 
-def get_or_create_llm(model_path: str) -> LLM:
+def get_or_create_llm(model_path: str, batch_size: int = 32, max_tokens: int = 64) -> LLM:
     """
-    Get or create a cached LLM instance for training efficiency.
-    This avoids recreating the LLM on every generation step during training.
+    Get or create a cached LLM instance optimized for RL training.
+    
+    This creates a MAX LLM instance with optimized batch processing settings
+    for RL training workloads, which typically involve multiple small batches
+    of completions.
+    
+    Args:
+        model_path: Path to the model 
+        batch_size: Optimal batch size for RL training (default: 32)
+        max_tokens: Maximum tokens per completion for optimization (default: 64)
     """
-    if model_path not in _LLM_CACHE:
+    cache_key = f"{model_path}_{batch_size}_{max_tokens}"
+    
+    if cache_key not in _LLM_CACHE:
         from max.entrypoints.llm import LLM
         from max.pipelines.lib.config import PipelineConfig
         
-        pipeline_config = PipelineConfig(model_path=model_path)
-        _LLM_CACHE[model_path] = LLM(pipeline_config=pipeline_config) # type: ignore
+        # Create optimized pipeline config for RL training
+        # These settings enable efficient batch processing and reduce latency
+        pipeline_config = PipelineConfig(
+            model_path=model_path,
+            # Batch processing optimization - key for performance
+            max_batch_size=batch_size,  # Optimize for RL training batch sizes
+            max_ce_batch_size=batch_size,  # Context encoding batch size should match
+            target_num_new_tokens=batch_size * max_tokens,  # Align with actual generation size
+            # Performance optimizations for faster processing
+            enable_chunked_prefill=True,  # Enable chunked prefill for memory efficiency
+            enable_in_flight_batching=True,  # Prioritize token generation over context encoding
+            # Memory and compute optimizations
+            max_num_steps=8,  # Limit forward steps for lower latency in RL training
+            pad_to_multiple_of=8,  # Optimize for GPU memory alignment (8 is better than default 2)
+        )
         
-    return _LLM_CACHE[model_path]
+        _LLM_CACHE[cache_key] = LLM(pipeline_config=pipeline_config) # type: ignore
+        
+    return _LLM_CACHE[cache_key]
 
 def clear_llm_cache():
-    """Clear the LLM cache. Useful for memory management in long training runs."""
+    """
+    Clear the LLM cache and properly dispose of MAX LLM instances.
+    This ensures proper cleanup and prevents hanging threads.
+    """
     global _LLM_CACHE
+    
+    # Properly dispose of each LLM instance if they have cleanup methods
+    for llm_instance in _LLM_CACHE.values():
+        try:
+            # Try to call any cleanup methods if they exist
+            if hasattr(llm_instance, 'close'):
+                llm_instance.close()
+            elif hasattr(llm_instance, 'shutdown'):
+                llm_instance.shutdown()
+        except Exception:
+            # Ignore cleanup errors - we're just trying to be thorough
+            pass
+    
     _LLM_CACHE.clear()
 
 # Configure logging to reduce verbosity
@@ -278,16 +319,30 @@ def generate_completions(
         
         expanded_prompts = [p for p in prompts for _ in range(num_generations)]
         
-        # Create LLM instance with pipeline config
+        # Create optimized LLM instance with batch processing settings
         # This automatically handles model detection, weight loading, and graph construction
-        pipeline_config = PipelineConfig(model_path=model)
+        total_completions = len(prompts) * num_generations
+        optimal_batch_size = max(8, min(32, total_completions))  # Between 8-32 for optimal performance
+        
+        pipeline_config = PipelineConfig(
+            model_path=model,
+            # Batch processing optimization for RL training  
+            max_batch_size=optimal_batch_size,
+            max_ce_batch_size=optimal_batch_size,
+            target_num_new_tokens=optimal_batch_size * max_completion_length,
+            # Performance optimizations for faster processing
+            enable_chunked_prefill=True,
+            enable_in_flight_batching=True,
+            max_num_steps=8,
+            pad_to_multiple_of=8,
+        )
         llm = LLM(pipeline_config=pipeline_config) # type: ignore
         
-        # Generate completions using the LLM - same as 'max' backend but with automatic model loading
+        # Generate completions using the optimized LLM - same as 'max' backend but with automatic model loading
         responses = llm.generate(
             prompts=expanded_prompts, 
             max_new_tokens=max_completion_length,
-            use_tqdm=False
+            use_tqdm=False  # Disable progress bar for training
         )
         
         completions_text = list(responses)
@@ -386,7 +441,10 @@ def generate_completions(
         # Handle both pre-initialized LLM instances and model paths
         if isinstance(model, str):
             # Training case: model path provided, create/reuse LLM instance
-            llm_model = get_or_create_llm(model)
+            # Calculate optimal batch size for RL training based on the actual workload
+            total_completions = len(prompts) * num_generations
+            optimal_batch_size = max(8, min(32, total_completions))  # Between 8-32 for optimal performance
+            llm_model = get_or_create_llm(model, batch_size=optimal_batch_size, max_tokens=max_completion_length)
         elif isinstance(model, MaxLLM):
             # Direct usage case: pre-initialized LLM instance
             llm_model = model
@@ -396,10 +454,12 @@ def generate_completions(
             )
         expanded_prompts_text = [p for p in prompts for _ in range(num_generations)]
 
+        # Generate completions with optimized batch processing
+        # MAX LLM automatically handles batching internally for optimal performance
         responses = llm_model.generate(
             prompts=expanded_prompts_text, 
             max_new_tokens=max_completion_length,
-            use_tqdm=False
+            use_tqdm=False  # Disable progress bar for training
         )
         
         completions_text = list(responses)

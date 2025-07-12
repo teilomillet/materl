@@ -151,6 +151,12 @@ def main():
     print("   • Easy to switch between backends via configuration")
     print("   • Use materl.run() with algorithm functions, not methods on Agent objects")
     print("   • Config objects are automatically extracted by the compiler")
+    
+    # Clean up MAX LLM instances to ensure proper script termination
+    print("\n🧹 Cleaning up MAX resources...")
+    from materl.functions.generation import clear_llm_cache
+    clear_llm_cache()
+    print("   ✅ Cleanup completed")
 
 
 if __name__ == "__main__":
